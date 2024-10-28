@@ -1,9 +1,9 @@
 #include <FastLED.h>
-#define NUM_LEDS 21
+#define NUM_LEDS 84
 #define DATA_PIN 3
 #define WAVELENGTH 768 // # of steps peak-to-peak 
 #define MAXBRIGHT 255  // maximum brightness level (min is 0)
-#define DELAY_MS 100   // delay before updating colors, in ms
+#define DELAY_MS 150   // delay before updating colors, in ms
 #define SCALING_FACTOR 20 //THe phase distance in waveform between the each LED
 
 
@@ -56,7 +56,7 @@ int tempRidx;
 int tempGidx;
 int tempBidx;
 
-int waveform[WAVELENGTH];
+byte waveform[WAVELENGTH];
 
 void setup() {
 
@@ -65,10 +65,10 @@ void setup() {
   FastLED.addLeds<WS2811, DATA_PIN>(leds, NUM_LEDS); 
   
   //Blacking out any LEDS that might be left on
-  for (int i = 0; i < NUM_LEDS; i++) {
-    leds[i].setRGB(0,0,0);
-    FastLED.show();
-  }
+//  for (int i = 0; i < NUM_LEDS; i++) {
+//    leds[i].setRGB(0,0,0);
+//    FastLED.show();
+//  }
 
   
   // TODO: delete most of this code by using the FastLED triwave8() func
