@@ -1,11 +1,11 @@
 #include <FastLED.h>
 #define NUM_LEDS 84
 #define DATA_PIN 3
-#define WAVELENGTH 768 // # of steps peak-to-peak 
+#define INTERRUPT_PIN 2
+#define WAVELENGTH 125 // # of steps peak-to-peak 
 #define MAXBRIGHT 255  // maximum brightness level (min is 0)
-#define DELAY_MS 150   // delay before updating colors, in ms
+#define DELAY_MS 50   // delay before updating colors, in ms
 #define SCALING_FACTOR 20 //THe phase distance in waveform between the each LED
-
 
 
 /*
@@ -55,20 +55,25 @@ int Bidx;
 int tempRidx;
 int tempGidx;
 int tempBidx;
+unsigned long prevMsB = 0;
+unsigned long prevMsL = 0;
+const long powerTime = 100;
+const int buttonPin = 8;  // the number of the pushbutton pin
+
+bool lightsOn = 1; //default on
+bool buttPush = 0; //default off
+bool changeState = 0;
 
 byte waveform[WAVELENGTH];
 
-void setup() {
 
-  //Serial.begin(9600);
-  //Serial.println("Hi");
-  FastLED.addLeds<WS2811, DATA_PIN>(leds, NUM_LEDS); 
-  
-  //Blacking out any LEDS that might be left on
-//  for (int i = 0; i < NUM_LEDS; i++) {
-//    leds[i].setRGB(0,0,0);
-//    FastLED.show();
-//  }
+void setup() {
+  pinMode(buttonPin, INPUT);
+  Serial.begin(9600);
+  Serial.println("Hi");
+  FastLED.addLeds<WS2811, DATA_PIN>(leds, NUM_LEDS);
+
+
 
   
   // TODO: delete most of this code by using the FastLED triwave8() func
@@ -113,25 +118,87 @@ void setup() {
 }
 
 void loop() {
-  // scan through the full waveform to assign a different value
-  // to each LED, looping back to the start as necessary
-
-  for(int n=0; n < NUM_LEDS; n++) {
-
-    tempRidx = (Ridx + n*SCALING_FACTOR) % WAVELENGTH;
-    tempGidx = (Gidx + n*SCALING_FACTOR) % WAVELENGTH;
-    tempBidx = (Bidx + n*SCALING_FACTOR) % WAVELENGTH;
-
-
-    leds[n].r = waveform[tempRidx];
-    leds[n].g = waveform[tempGidx];
-    leds[n].b = waveform[tempBidx];
-  }
-
-  Ridx = (Ridx + 1) % WAVELENGTH;
-  Gidx = (Gidx + 1) % WAVELENGTH;
-  Bidx = (Bidx + 1) % WAVELENGTH;
+  //take time measurement
+  //decide whether to do lights on or off
   
+  unsigned long currMs = millis();
+  unsigned int buttonState = digitalRead(buttonPin);
+  if (buttonState) {
+    if (!buttPush ) {
+      buttPush = 1;
+      prevMsB = currMs;
+    }
+    if (!changeState && currMs - prevMsB >= powerTime) {
+      lightsOn = !lightsOn;
+      changeState = 1;
+    }
+
+/*
+    Serial.print("BUTTON - ");
+    Serial.print(buttPush);
+    Serial.print("\t");
+    Serial.print(changeState);
+    Serial.print("\t");
+    Serial.print(prevMsB);
+    Serial.print("\t");
+    Serial.print(currMs);
+    Serial.print("\n");
+*/
+
+  } else {
+  /*  if(buttPush) {
+      Serial.println("BUTTON OFF ----------------------------------");
+    }*/
+    buttPush = 0;
+    changeState = 0;
+  }
+  
+  if (currMs - prevMsL >= DELAY_MS) {
+    prevMsL = currMs;
+    if (lightsOn) {
+      lightsCycle();
+      //Serial.print("ON:  ");
+      //Serial.println(currMs);
+    } else {
+      lightsOff();
+      //Serial.print("OFF: ");
+      //Serial.println(currMs);
+    }
+    
+  }
+  delay(10);
+}
+
+void lightsOff() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+      leds[i].setRGB(0,0,0);
+  }
+ 
+  FastLED.show();
+}
+
+void lightsCycle() {
+  
+    // scan through the full waveform to assign a different value
+    // to each LED, looping back to the start as necessary
+    for(int n=0; n < NUM_LEDS; n++) {
+
+      tempRidx = (Ridx + n*SCALING_FACTOR) % WAVELENGTH;
+      tempGidx = (Gidx + n*SCALING_FACTOR) % WAVELENGTH;
+      tempBidx = (Bidx + n*SCALING_FACTOR) % WAVELENGTH;
+
+
+      leds[n].r = waveform[tempRidx];
+      leds[n].g = waveform[tempGidx];
+      leds[n].b = waveform[tempBidx];
+    }
+
+    Ridx = (Ridx + 1) % WAVELENGTH;
+    Gidx = (Gidx + 1) % WAVELENGTH;
+    Bidx = (Bidx + 1) % WAVELENGTH;
+ 
+
   FastLED.show();
   delay(DELAY_MS);
 }
+
