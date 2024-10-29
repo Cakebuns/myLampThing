@@ -1,12 +1,55 @@
 #include <FastLED.h>
 #define NUM_LEDS 84
 #define DATA_PIN 3
-#define INTERRUPT_PIN 2
 #define WAVELENGTH 125 // # of steps peak-to-peak 
 #define MAXBRIGHT 255  // maximum brightness level (min is 0)
 #define DELAY_MS 50   // delay before updating colors, in ms
 #define SCALING_FACTOR 20 //THe phase distance in waveform between the each LED
 
+class ButtCheck {
+
+
+  public:           // Access specifier
+    unsigned long buttonStartTime = 0; //Start time since the button has been high, with debounce control
+    unsigned long lastTimeCheck = 0;
+    int debCount; //debounce buffer counter.  zero = button is off
+    const int debBufferMax = 50; //button has to be low for at least 50 ms to be registered as off
+    const int timeCheckInterval = 1; //
+    int myButtonPinNum; //what button pin number is it that I'm watching 
+    
+    ButtCheck(int tempButt) {     // Constructor
+      myButtonPinNum = tempButt;
+    }
+
+    int timeButtPush() {
+      
+      unsigned long currTimeCheck = millis();  //temp var to get current time
+      //if sufficient time has passed since the last time check
+      if (currTimeCheck - lastTimeCheck >= timeCheckInterval) {
+        lastTimeCheck = currTimeCheck;
+        //if button is pushed
+        if (digitalRead(myButtonPinNum)) { //if reads button as high
+          if (debCount == 0) { //first signal that the button has been pushed.  So, set the start time as now
+            buttonStartTime = currTimeCheck;
+          }
+          debCount = debCount + 10;
+          
+          if (debCount > debBufferMax) {
+            debCount = debBufferMax;
+          } 
+        } else { //if reads button as low
+          debCount = debCount - 1;
+        }
+      }
+      if (debCount <= 0) {//debounce buffer has run out, so assume button was actually released
+        debCount = 0;
+        return 0;
+      }
+      int tempInt = currTimeCheck - buttonStartTime;
+      return tempInt;
+    }
+
+};
 
 /*
   we're going to use a triangle wave that's truncated below 0, like so:
@@ -55,14 +98,14 @@ int Bidx;
 int tempRidx;
 int tempGidx;
 int tempBidx;
-unsigned long prevMsB = 0;
+
 unsigned long prevMsL = 0;
-const long powerTime = 100;
+
 const int buttonPin = 8;  // the number of the pushbutton pin
+ButtCheck myTouchSense(buttonPin);
 
 bool lightsOn = 1; //default on
-bool buttPush = 0; //default off
-bool changeState = 0;
+bool lightsOnChanged = 0; //default off
 
 byte waveform[WAVELENGTH];
 
@@ -118,55 +161,21 @@ void setup() {
 }
 
 void loop() {
-  //take time measurement
-  //decide whether to do lights on or off
-  
-  unsigned long currMs = millis();
-  unsigned int buttonState = digitalRead(buttonPin);
-  if (buttonState) {
-    if (!buttPush ) {
-      buttPush = 1;
-      prevMsB = currMs;
-    }
-    if (!changeState && currMs - prevMsB >= powerTime) {
-      lightsOn = !lightsOn;
-      changeState = 1;
-    }
-
-/*
-    Serial.print("BUTTON - ");
-    Serial.print(buttPush);
-    Serial.print("\t");
-    Serial.print(changeState);
-    Serial.print("\t");
-    Serial.print(prevMsB);
-    Serial.print("\t");
-    Serial.print(currMs);
-    Serial.print("\n");
-*/
-
-  } else {
-  /*  if(buttPush) {
-      Serial.println("BUTTON OFF ----------------------------------");
-    }*/
-    buttPush = 0;
-    changeState = 0;
+  if (lightsOn) {
+    lightsCycle();
   }
-  
-  if (currMs - prevMsL >= DELAY_MS) {
-    prevMsL = currMs;
-    if (lightsOn) {
-      lightsCycle();
-      //Serial.print("ON:  ");
-      //Serial.println(currMs);
-    } else {
+
+  if (myTouchSense.timeButtPush() > 1000 && !lightsOnChanged) {  //on change of state
+    lightsOnChanged = 1;
+    lightsOn = !lightsOn;
+    if (!lightsOn) {
       lightsOff();
-      //Serial.print("OFF: ");
-      //Serial.println(currMs);
     }
-    
+  } 
+
+  if (myTouchSense.timeButtPush() == 0) { //reset change of state
+    lightsOnChanged = 0;
   }
-  delay(10);
 }
 
 void lightsOff() {
@@ -179,26 +188,25 @@ void lightsOff() {
 
 void lightsCycle() {
   
-    // scan through the full waveform to assign a different value
-    // to each LED, looping back to the start as necessary
-    for(int n=0; n < NUM_LEDS; n++) {
 
-      tempRidx = (Ridx + n*SCALING_FACTOR) % WAVELENGTH;
-      tempGidx = (Gidx + n*SCALING_FACTOR) % WAVELENGTH;
-      tempBidx = (Bidx + n*SCALING_FACTOR) % WAVELENGTH;
+    unsigned long currTime = millis();
+    if (currTime - prevMsL > DELAY_MS) {  //Only do the lightcycle if enough time has passed
+      prevMsL = currTime;
+      for(int n=0; n < NUM_LEDS; n++) {
+        // scan through the full waveform to assign a different value
+        // to each LED, looping back to the start as necessary, separating them out by the scaling factor
+        tempRidx = (Ridx + n*SCALING_FACTOR) % WAVELENGTH;
+        tempGidx = (Gidx + n*SCALING_FACTOR) % WAVELENGTH;
+        tempBidx = (Bidx + n*SCALING_FACTOR) % WAVELENGTH;
+        leds[n].r = waveform[tempRidx];
+        leds[n].g = waveform[tempGidx];
+        leds[n].b = waveform[tempBidx];
+      }
 
-
-      leds[n].r = waveform[tempRidx];
-      leds[n].g = waveform[tempGidx];
-      leds[n].b = waveform[tempBidx];
-    }
-
-    Ridx = (Ridx + 1) % WAVELENGTH;
-    Gidx = (Gidx + 1) % WAVELENGTH;
-    Bidx = (Bidx + 1) % WAVELENGTH;
- 
-
-  FastLED.show();
-  delay(DELAY_MS);
+      Ridx = (Ridx + 1) % WAVELENGTH;
+      Gidx = (Gidx + 1) % WAVELENGTH;
+      Bidx = (Bidx + 1) % WAVELENGTH;
+      FastLED.show();
+  }
 }
 
