@@ -1,10 +1,10 @@
-#include <FastLED.h>
 #define NUM_LEDS 84
 #define DATA_PIN 3
 #define WAVELENGTH 125 // # of steps peak-to-peak 
 #define MAXBRIGHT 255  // maximum brightness level (min is 0)
 #define DELAY_MS 50   // delay before updating colors, in ms
 #define SCALING_FACTOR 20 //THe phase distance in waveform between the each LED
+const int buttonPin = 8;  // the number of the pushbutton pin
 
 class ButtCheck {
 
@@ -51,162 +51,85 @@ class ButtCheck {
 
 };
 
-/*
-  we're going to use a triangle wave that's truncated below 0, like so:
-  MAX |\                  /\
-      | \                /  \
-      |  \              /    \
-      |   \            /      \
-  0___|____\__________/________\_
-      |
+// constants won't change. Used here to set a pin number:
+const int ledPin = LED_BUILTIN;  // the number of the LED pin
 
-  but then overlay 3 of these, one each for R, G, B:
-      R    G    B         R    G
-  MAX |\   /\   /\  oops  /\   /\
-      | \ /  \ /  \      /  \ /
-      |  X    X    \    /    X
-      | / \  / \    \  /    / \
-  0___|/___\/___\____\/____/___\_
-      |
+// Variables will change:
+int ledState = LOW;  // ledState used to set the LED
 
-  so really we want to cut off half of the negative (zero) part of the cycle:
-  MAX |\             /\
-      | \           /  \
-      |  \         /    \
-      |   \       /      \
-  0___|____\_____/________\_
-      |
+// Generally, you should use "unsigned long" for variables that hold time
+// The value will quickly become too large for an int to store
+unsigned long previousMillis = 0;  // will store last time LED was updated
 
-  for this pattern:
-      R    G    B    R    G    B
-  MAX |\   /\   /\   /\   /\   /\
-      | \ /  \ /  \ /  \ /  \ /
-      |  X    X    X    X    X
-      | / \  / \  / \  / \  / \
-  0___|/___\/___\/___\/___\/___\/_
-      |
-
-  so, using WAVELENGTH and MAXBRIGHT, we precalculate an array of values sampled
-  from the conceptual (dis)continuous function, then shift along those at each
-  step, with a different offset for each color
-*/
-
-CRGB leds[NUM_LEDS];
-int Ridx;
-int Gidx;
-int Bidx;
-int tempRidx;
-int tempGidx;
-int tempBidx;
-
-unsigned long prevMsL = 0;
-
-const int buttonPin = 8;  // the number of the pushbutton pin
+// constants won't change:
+long interval = 1000;  // interval at which to blink (milliseconds)
 ButtCheck myTouchSense(buttonPin);
-
 bool lightsOn = 1; //default on
-bool lightsOnChanged = 0; //default off
+bool fastMode = 0; //default off
 
-byte waveform[WAVELENGTH];
-
+bool scPowerOff = 0;
+int buttPressedTime; 
 
 void setup() {
-  pinMode(buttonPin, INPUT);
-  Serial.begin(9600);
-  Serial.println("Hi");
-  FastLED.addLeds<WS2811, DATA_PIN>(leds, NUM_LEDS);
-
-
-
-  
-  // TODO: delete most of this code by using the FastLED triwave8() func
-  //       also look into other provided funcs
-  //       (maybe beatsin8 would be even better?)
-
-  /*
-    start moving upward from the wave minimum, so we're going to generate this:
-    MAX |     /\
-        |    /  \
-    0___|___/____\_
-  */
-
-  double slope = (double) (MAXBRIGHT) / (WAVELENGTH / 3);
-  double val = -1 * MAXBRIGHT;
-  //Serial.print("slope = "); Serial.println(slope);
-  for (int i=0; i < WAVELENGTH; i++) {
-    // TODO: probably going to be some errors in here
-    // wrt int -> double -> int conversion
-    
-    // clamp to 0 while val is negative
-    if (val >= 0) {
-      waveform[i] = floor(val);
-    } else {
-      waveform[i] = 0;
-    }
-
-    val = val + slope;
-
-    // once we hit max, start going down
-    if (val >= MAXBRIGHT) {
-      val = MAXBRIGHT;
-      slope *= -1;
-    }
-    //Serial.print("i: "); Serial.print(i); Serial.print(" = "); Serial.println(val);
-  }
-  // these offsets will make the cycle start at 100% red,
-  // as in the diagram above
-  Ridx = (2 * WAVELENGTH) / 3;
-  Gidx = WAVELENGTH / 3;
-  Bidx = 0;
+  // set the digital pin as output:
+  pinMode(ledPin, OUTPUT);
 }
 
 void loop() {
   if (lightsOn) {
-    lightsCycle();
+    blink();
   }
 
-  if (myTouchSense.timeButtPush() > 1000 && !lightsOnChanged) {  //on change of state
-    lightsOnChanged = 1;
-    lightsOn = !lightsOn;
-    if (!lightsOn) {
-      lightsOff();
+  if (buttPressedTime > 0 && myTouchSense.timeButtPush() == 0) { //button released functions
+    if (buttPressedTime > 500 && buttPressedTime < 3000) { //power off if released for between 1 and 2 secs
+      lightsOn = !lightsOn;
+      if (!lightsOn) {
+        digitalWrite(ledPin, LOW);
+      }
     }
-  } 
-
-  if (myTouchSense.timeButtPush() == 0) { //reset change of state
-    lightsOnChanged = 0;
-  }
-}
-
-void lightsOff() {
-  for (int i = 0; i < NUM_LEDS; i++) {
-      leds[i].setRGB(0,0,0);
-  }
- 
-  FastLED.show();
-}
-
-void lightsCycle() {
-  
-
-    unsigned long currTime = millis();
-    if (currTime - prevMsL > DELAY_MS) {  //Only do the lightcycle if enough time has passed
-      prevMsL = currTime;
-      for(int n=0; n < NUM_LEDS; n++) {
-        // scan through the full waveform to assign a different value
-        // to each LED, looping back to the start as necessary, separating them out by the scaling factor
-        tempRidx = (Ridx + n*SCALING_FACTOR) % WAVELENGTH;
-        tempGidx = (Gidx + n*SCALING_FACTOR) % WAVELENGTH;
-        tempBidx = (Bidx + n*SCALING_FACTOR) % WAVELENGTH;
-        leds[n].r = waveform[tempRidx];
-        leds[n].g = waveform[tempGidx];
-        leds[n].b = waveform[tempBidx];
+    if (buttPressedTime > 3000) { //switch modes if released for longer than 2 secs
+      fastMode = !fastMode;
+      if (fastMode) {
+        interval = 500;
+      } else {
+        interval = 1000;
       }
 
-      Ridx = (Ridx + 1) % WAVELENGTH;
-      Gidx = (Gidx + 1) % WAVELENGTH;
-      Bidx = (Bidx + 1) % WAVELENGTH;
-      FastLED.show();
+    }
   }
+
+  if (buttPressedTime > 500 && scPowerOff == 0) {//first state change
+    scPowerOff = 1;
+    
+  }
+
+  if (buttPressedTime == 0) {//reset all the state change bools
+    scPowerOff = 0;
+  }
+ 
+  buttPressedTime = myTouchSense.timeButtPush();
 }
 
+void blink() {
+  // here is where you'd put code that needs to be running all the time.
+
+  // check to see if it's time to blink the LED; that is, if the difference
+  // between the current time and last time you blinked the LED is bigger than
+  // the interval at which you want to blink the LED.
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - previousMillis >= interval) {
+    // save the last time you blinked the LED
+    previousMillis = currentMillis;
+
+    // if the LED is off turn it on and vice-versa:
+    if (ledState == LOW) {
+      ledState = HIGH;
+    } else {
+      ledState = LOW;
+    }
+
+    // set the LED with the ledState of the variable:
+    digitalWrite(ledPin, ledState);
+  }
+}
