@@ -1,0 +1,135 @@
+#define NUM_LEDS 84
+#define DATA_PIN 3
+#define WAVELENGTH 125 // # of steps peak-to-peak 
+#define MAXBRIGHT 255  // maximum brightness level (min is 0)
+#define DELAY_MS 50   // delay before updating colors, in ms
+#define SCALING_FACTOR 20 //THe phase distance in waveform between the each LED
+const int buttonPin = 8;  // the number of the pushbutton pin
+
+class ButtCheck {
+
+
+  public:           // Access specifier
+    unsigned long buttonStartTime = 0; //Start time since the button has been high, with debounce control
+    unsigned long lastTimeCheck = 0;
+    int debCount; //debounce buffer counter.  zero = button is off
+    const int debBufferMax = 50; //button has to be low for at least 50 ms to be registered as off
+    const int timeCheckInterval = 1; //
+    int myButtonPinNum; //what button pin number is it that I'm watching 
+    
+    ButtCheck(int tempButt) {     // Constructor
+      myButtonPinNum = tempButt;
+    }
+
+    int timeButtPush() {
+      
+      unsigned long currTimeCheck = millis();  //temp var to get current time
+      //if sufficient time has passed since the last time check
+      if (currTimeCheck - lastTimeCheck >= timeCheckInterval) {
+        lastTimeCheck = currTimeCheck;
+        //if button is pushed
+        if (digitalRead(myButtonPinNum)) { //if reads button as high
+          if (debCount == 0) { //first signal that the button has been pushed.  So, set the start time as now
+            buttonStartTime = currTimeCheck;
+          }
+          debCount = debCount + 10;
+          
+          if (debCount > debBufferMax) {
+            debCount = debBufferMax;
+          } 
+        } else { //if reads button as low
+          debCount = debCount - 1;
+        }
+      }
+      if (debCount <= 0) {//debounce buffer has run out, so assume button was actually released
+        debCount = 0;
+        return 0;
+      }
+      int tempInt = currTimeCheck - buttonStartTime;
+      return tempInt;
+    }
+
+};
+
+// constants won't change. Used here to set a pin number:
+const int ledPin = LED_BUILTIN;  // the number of the LED pin
+
+// Variables will change:
+int ledState = LOW;  // ledState used to set the LED
+
+// Generally, you should use "unsigned long" for variables that hold time
+// The value will quickly become too large for an int to store
+unsigned long previousMillis = 0;  // will store last time LED was updated
+
+// constants won't change:
+long interval = 1000;  // interval at which to blink (milliseconds)
+ButtCheck myTouchSense(buttonPin);
+bool lightsOn = 1; //default on
+bool fastMode = 0; //default off
+
+bool scPowerOff = 0;
+int buttPressedTime; 
+
+void setup() {
+  // set the digital pin as output:
+  pinMode(ledPin, OUTPUT);
+}
+
+void loop() {
+  if (lightsOn) {
+    blink();
+  }
+
+  if (buttPressedTime > 0 && myTouchSense.timeButtPush() == 0) { //button released functions
+    if (buttPressedTime > 500 && buttPressedTime < 3000) { //power off if released for between 1 and 2 secs
+      lightsOn = !lightsOn;
+      if (!lightsOn) {
+        digitalWrite(ledPin, LOW);
+      }
+    }
+    if (buttPressedTime > 3000) { //switch modes if released for longer than 2 secs
+      fastMode = !fastMode;
+      if (fastMode) {
+        interval = 500;
+      } else {
+        interval = 1000;
+      }
+
+    }
+  }
+
+  if (buttPressedTime > 500 && scPowerOff == 0) {//first state change
+    scPowerOff = 1;
+    
+  }
+
+  if (buttPressedTime == 0) {//reset all the state change bools
+    scPowerOff = 0;
+  }
+ 
+  buttPressedTime = myTouchSense.timeButtPush();
+}
+
+void blink() {
+  // here is where you'd put code that needs to be running all the time.
+
+  // check to see if it's time to blink the LED; that is, if the difference
+  // between the current time and last time you blinked the LED is bigger than
+  // the interval at which you want to blink the LED.
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - previousMillis >= interval) {
+    // save the last time you blinked the LED
+    previousMillis = currentMillis;
+
+    // if the LED is off turn it on and vice-versa:
+    if (ledState == LOW) {
+      ledState = HIGH;
+    } else {
+      ledState = LOW;
+    }
+
+    // set the LED with the ledState of the variable:
+    digitalWrite(ledPin, ledState);
+  }
+}
