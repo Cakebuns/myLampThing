@@ -1,10 +1,13 @@
 #include <FastLED.h>
 #define NUM_LEDS 84
 #define DATA_PIN 3
-#define WAVELENGTH 125 // # of steps peak-to-peak 
-#define MAXBRIGHT 255  // maximum brightness level (min is 0)
-#define DELAY_MS 50   // delay before updating colors, in ms
-#define SCALING_FACTOR 20 //THe phase distance in waveform between the each LED
+#define WAVELENGTH 400 // # of steps peak-to-peak 
+#define MAX_BRIGHTNESS 255.0   // max brightness 0-255
+#define CYCLE_TIME 150   // delay before updating colors, in ms
+#define FLASH_TIME 50   // delay before rewriting outputs (Useful for fading)
+#define SCALING_FACTOR 20 //The phase distance in waveform between the each LED
+#define FADE_DURATION 1200 //The time it takes to fade between on and off
+#define BUTTON_PIN 8  // the number of the pushbutton pin
 
 class ButtCheck {
 
@@ -13,7 +16,7 @@ class ButtCheck {
     unsigned long buttonStartTime = 0; //Start time since the button has been high, with debounce control
     unsigned long lastTimeCheck = 0;
     int debCount; //debounce buffer counter.  zero = button is off
-    const int debBufferMax = 50; //button has to be low for at least 50 ms to be registered as off
+    const int debBufferMax = 6; //button has to be low for at least 50 ms to be registered as off
     const int timeCheckInterval = 1; //
     int myButtonPinNum; //what button pin number is it that I'm watching 
     
@@ -32,7 +35,7 @@ class ButtCheck {
           if (debCount == 0) { //first signal that the button has been pushed.  So, set the start time as now
             buttonStartTime = currTimeCheck;
           }
-          debCount = debCount + 10;
+          debCount = debCount + 2;
           
           if (debCount > debBufferMax) {
             debCount = debBufferMax;
@@ -99,27 +102,34 @@ int tempRidx;
 int tempGidx;
 int tempBidx;
 
-unsigned long prevMsL = 0;
+int brightness = 255;
 
-const int buttonPin = 8;  // the number of the pushbutton pin
-ButtCheck myTouchSense(buttonPin);
+unsigned long cyclePrevTime = 0;
+unsigned long flashPrevTime = 0;
+
+ButtCheck myTouchSense(BUTTON_PIN);
 
 bool lightsOn = 1; //default on
+bool lightOnModeLatch = 0; //For tracking if the lighton has already been switched
 bool redMode = 0; //default off
-int buttPressedTime; 
+bool redModeLatch = 0; //For tracking if the redmode has already been switched
+int lastButtonTime; 
+
+bool fadingToBlack = 0;
+bool fadingToLight = 1;
+int fadeStartTime = 0;
+int fadeScale = 255;
+
 
 byte waveform[WAVELENGTH];
 
 
 void setup() {
-  pinMode(buttonPin, INPUT);
-  Serial.begin(9600);
-  Serial.println("Hi");
+  pinMode(BUTTON_PIN, INPUT);
+  //Serial.begin(9600);
+  //Serial.println("Hi");
   FastLED.addLeds<WS2811, DATA_PIN>(leds, NUM_LEDS);
 
-
-
-  
   // TODO: delete most of this code by using the FastLED triwave8() func
   //       also look into other provided funcs
   //       (maybe beatsin8 would be even better?)
@@ -131,8 +141,8 @@ void setup() {
     0___|___/____\_
   */
 
-  double slope = (double) (MAXBRIGHT) / (WAVELENGTH / 3);
-  double val = -1 * MAXBRIGHT;
+  double slope = (double) (1) / (WAVELENGTH / 3);
+  double val = -1;
   //Serial.print("slope = "); Serial.println(slope);
   for (int i=0; i < WAVELENGTH; i++) {
     // TODO: probably going to be some errors in here
@@ -140,91 +150,135 @@ void setup() {
     
     // clamp to 0 while val is negative
     if (val >= 0) {
-      waveform[i] = floor(val);
+      waveform[i] = floor(pow(val,2) * 255.0);
     } else {
-      waveform[i] = 0;
+      waveform[i] = 1;
     }
 
     val = val + slope;
 
     // once we hit max, start going down
-    if (val >= MAXBRIGHT) {
-      val = MAXBRIGHT;
+    if (val >= 1) {
+      val = 1;
       slope *= -1;
     }
-    //Serial.print("i: "); Serial.print(i); Serial.print(" = "); Serial.println(val);
+    //Serial.print("i: "); Serial.print(i); Serial.print(" = "); Serial.println(waveform[i]);
   }
   // these offsets will make the cycle start at 100% red,
   // as in the diagram above
   Ridx = (2 * WAVELENGTH) / 3;
   Gidx = WAVELENGTH / 3;
   Bidx = 0;
+
+  fadeStartTime = millis(); //DELETE ME maybe
 }
 
 void loop() {
+
+  //int currentButtonTime = myTouchSense.timeButtPush(); //This is zero if the button is released
+
+  //Serial.print("last: "); Serial.print(lastButtonTime); Serial.print(", now: "); Serial.println(currentButtonTime);
+
+  if (fadingToLight) {
+    fadeToLight();
+  }
+
+  if (fadingToBlack) {
+    fadeToBlack();
+  }
+
   if (lightsOn) {
     lightsCycle();
   }
 
-  if (buttPressedTime > 0 && myTouchSense.timeButtPush() == 0) { //button released functions
-    if (buttPressedTime > 500 && buttPressedTime < 3000) { //power off if released for between 1 and 2 secs
-      lightsOn = !lightsOn;
-      if (!lightsOn) {
-        lightsOff();
-      }
-    }
-    if (buttPressedTime > 3000) { //switch modes if released for longer than 3 secs
+  if (myTouchSense.timeButtPush() > 1000 && redModeLatch == 0) { //switch modes if released for longer than 3 secs
       redMode = !redMode;
+      redModeLatch = 1;
+  } else if (myTouchSense.timeButtPush() > 2000 && lightOnModeLatch == 0) { //power off if released for between .1 and 5 secs
+    lightsOn = !lightsOn;
+    lightOnModeLatch = 1;
+    redMode = 0;
+    if (lightsOn) { //turn lights on
+      fadingToLight = 1;
+      fadeStartTime = millis();
+      fadeScale = 0;
+    } else { //turn lights off
+      fadeScale = 0;
+      FastLED.setBrightness(fadeScale);
+      FastLED.show();
     }
   }
 
-/*
-  if (buttPressedTime > 3000 && scPowerOff == 0) {//first state change
 
-    
+
+  if (myTouchSense.timeButtPush() == 0) { //Button low
+    redModeLatch = 0;
+    lightOnModeLatch = 0;
   }
 
-  if (buttPressedTime == 0) {//reset all the state change bools
-
-  }
-  */
- 
-  buttPressedTime = myTouchSense.timeButtPush();
 }
 
-void lightsOff() {
-  for (int i = 0; i < NUM_LEDS; i++) {
-      leds[i].setRGB(0,0,0);
+void fadeToBlack() {
+  float temp = (float) (millis() - fadeStartTime) / FADE_DURATION;
+  if (temp > 1.0) {
+    temp = 1.0;
+    fadingToBlack = 0; 
   }
- 
-  FastLED.show();
+  temp = 1.0 - temp;
+  temp = pow(temp, 4.0);
+  fadeScale = temp * MAX_BRIGHTNESS;
+
+}
+
+void fadeToLight() {
+  float temp = (float) (millis() - fadeStartTime) / FADE_DURATION;
+  if (temp > 1.0) { //Fully faded
+    temp = 1.0;
+    fadingToLight = 0; 
+  }
+  temp = pow(temp, 2.0);
+  fadeScale = temp * MAX_BRIGHTNESS;
+
 }
 
 void lightsCycle() {
   
 
     unsigned long currTime = millis();
-    if (currTime - prevMsL > DELAY_MS) {  //Only do the lightcycle if enough time has passed
-      prevMsL = currTime;
+    if (currTime - cyclePrevTime > CYCLE_TIME) {  //Only do the lightcycle if enough time has passed
+      cyclePrevTime = currTime;
       for(int n=0; n < NUM_LEDS; n++) {
         // scan through the full waveform to assign a different value
         // to each LED, looping back to the start as necessary, separating them out by the scaling factor
         tempRidx = (Ridx + n*SCALING_FACTOR) % WAVELENGTH;
         tempGidx = (Gidx + n*SCALING_FACTOR) % WAVELENGTH;
         tempBidx = (Bidx + n*SCALING_FACTOR) % WAVELENGTH;
-        leds[n].r = waveform[tempRidx];
-        leds[n].g = waveform[tempGidx];
+        //led.r is actually blue, g is actually red, and b is actually green
+
         if (redMode) {
-          leds[n].b = 0;
+          leds[n].r = 0;
+          
+          leds[n].b = waveform[tempGidx] * 0.4;
+          if (waveform[tempBidx] > waveform[tempRidx]) {
+            leds[n].g = waveform[tempBidx];
+          } else {
+            leds[n].g = waveform[tempRidx]; 
+          }
         } else {
-          leds[n].b = waveform[tempBidx];
+          leds[n].r = waveform[tempBidx];
+          leds[n].b = waveform[tempGidx];
+          leds[n].g = waveform[tempRidx]; 
         }
       }
 
       Ridx = (Ridx + 1) % WAVELENGTH;
       Gidx = (Gidx + 1) % WAVELENGTH;
       Bidx = (Bidx + 1) % WAVELENGTH;
+    }
+
+    if (currTime - flashPrevTime > FLASH_TIME) {  //Only do the flash if enough time has passed
+      flashPrevTime = currTime;
+      FastLED.setBrightness(fadeScale);
       FastLED.show();
   }
 }
-
